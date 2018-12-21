@@ -1,5 +1,6 @@
 import numpy as np
 from physics_sim import PhysicsSim
+from numpy import linalg as LA
 
 class Task():
     """Task (environment) that defines the goal and provides feedback to the agent."""
@@ -18,32 +19,66 @@ class Task():
         self.sim = PhysicsSim(init_pose, init_velocities, init_angle_velocities, runtime) 
         self.action_repeat = 3
 
-        self.state_size = self.action_repeat * 6
+        self.state_size = self.action_repeat * 18
         self.action_low = 0
         self.action_high = 900
-        self.action_size = 4
+        self.action_size = 2
 
+        self.count = 0
+        
         # Goal
         self.target_pos = target_pos if target_pos is not None else np.array([0., 0., 10.]) 
 
+        init_pose = init_pose if init_pose is not None else np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+        self.inital_distance = self.get_manhattan(init_pose[:3], self.target_pos)
+        self.target_reached = 0
+    
+    def get_manhattan(self, A, B):
+        return (abs(A - B)).sum()
+
+    def get_distance(self):
+        return LA.norm(self.sim.pose[:3] - self.target_pos)
+
+
     def get_reward(self):
         """Uses current pose of sim to return reward."""
-        reward = 1.-.3*(abs(self.sim.pose[:3] - self.target_pos)).sum()
-        return reward
+        self.count += 1
+        xy_distance = abs(self.sim.pose[:2] - self.target_pos[:2]).sum()
+#        reward = 0.02 + 2 * self.sim.pose[2] + 2 * self.sim.v[2] - 0.3 * xy_distance
+#        reward = 0.02 + 2 * self.sim.pose[2] + 10 * self.sim.v[2] 
+ #       return reward
+        distance_z = (abs(self.sim.pose[2] - self.target_pos[2])).sum()
+        vmax = 8
+        return 0.02 - np.tanh(xy_distance) + 1.2 * np.tanh(max(self.sim.v[2], vmax)) - np.tanh(distance_z)
+        #return 0.02 + np.tanh(self.sim.pose[2]) + np.tanh(self.sim.v[2])
+
 
     def step(self, rotor_speeds):
         """Uses action to obtain next state, reward, done."""
         reward = 0
-        pose_all = []
+        state_all = []
         for _ in range(self.action_repeat):
-            done = self.sim.next_timestep(rotor_speeds) # update the sim pose and velocities
+            done = self.sim.next_timestep(np.concatenate([rotor_speeds] *2)) # update the sim pose and velocities
             reward += self.get_reward() 
-            pose_all.append(self.sim.pose)
-        next_state = np.concatenate(pose_all)
+            state_all.append(np.hstack([
+                    self.sim.pose,
+                    self.sim.v,
+                    self.sim.linear_accel,
+                     self.sim.angular_v,
+                     self.sim.angular_accels
+                ]))
+        next_state = np.concatenate(state_all)
         return next_state, reward, done
 
     def reset(self):
         """Reset the sim to start a new episode."""
         self.sim.reset()
-        state = np.concatenate([self.sim.pose] * self.action_repeat) 
+        self.count = 0
+        state = np.hstack([
+           self.sim.pose,
+           self.sim.v,
+           self.sim.linear_accel,            
+            self.sim.angular_v,
+            self.sim.angular_accels
+        ] * self.action_repeat)
         return state
